@@ -48,12 +48,16 @@ def main(data_path):
     results = results.astype(result_column_types)
     results = results.set_index(result_index_columns)
 
+    latest_date = pd.Timestamp(2020, 1, 1)
+
     for entry in os.scandir(data_path):
         if not entry.is_file() or not entry.path.endswith('.csv'):
             continue
 
         file = entry.path
         date = pd.to_datetime(Path(file).stem)
+
+        latest_date = date if date > latest_date else latest_date
 
         df = pd.read_csv(file)
         df = df.rename(columns=clean_column_names)
@@ -117,7 +121,7 @@ def main(data_path):
             ax = df.plot(ax=ax, kind='line', x=x_axis, y=y_axis, label=covid_label.display_name, loglog=True)
 
     plt.legend(loc='best')
-    plt.xlabel("Confirmed Cases (per 1k)")
+    plt.xlabel("Confirmed Cases (per 1k) - " + latest_date.strftime('%Y-%m-%d'))
     plt.ylabel("New Cases in Last 7 Days (per 1k)")
     # plt.xlabel("Deaths (per 1k)")
     # plt.ylabel("New Deaths in Last 7 Days (per 1k)")
