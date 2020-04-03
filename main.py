@@ -1,11 +1,12 @@
 #!/usr/local/bin/python
 import pandas as pd
 import numpy as np
+from datetime import timedelta
 import os
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-covid_data = "./COVID-19/csse_covid_19_data/csse_covid_19_daily_reports"
+covid_data_path = "./COVID-19/csse_covid_19_data/csse_covid_19_daily_reports"
 
 covid_date_column = 'DATE'
 covid_first_level_column = 'COUNTRY_REGION'
@@ -24,40 +25,96 @@ result_columns = [covid_date_column, *covid_columns]
 result_column_types = {**{covid_date_column: np.datetime64}, **covid_column_types}
 
 
-def main(data_path):
+def main():
+    cmap = plt.get_cmap("tab10")
     covid_labels = [
-        CovidLabel('Australia', 2.54e7, 'Australia'),
-        CovidLabel('China', 1.44e9, ['China', 'Mainland China']),
-        CovidLabel('France', 6.52e7, 'France'),
-        CovidLabel('Germany', 8.37e7, 'Germany'),
-        CovidLabel('Italy', 6.05e7, 'Italy'),
-        CovidLabel('Spain', 5.68e7, 'Spain'),
-        CovidLabel('South Korea', 5.13e7, ['South Korea', 'Korea, South']),
-        CovidLabel('USA', 3.31e8, 'US'),
+        # CovidLabel('Australia', cmap(0), 2.54e7, 'Australia'),
+        # CovidLabel('China', cmap(1), 1.44e9, ['China', 'Mainland China']),
+        # CovidLabel('France', cmap(2), 6.52e7, 'France'),
+        # CovidLabel('Germany', cmap(3), 8.37e7, 'Germany'),
+        # CovidLabel('Italy', cmap(4), 6.05e7, 'Italy'),
+        # CovidLabel('Iran', cmap(5), 8.37e7, 'Iran'),
+        # CovidLabel('Singapore', cmap(6), 5.84e6, 'Singapore'),
+        # CovidLabel('Spain', cmap(7), 5.68e7, 'Spain'),
+        # CovidLabel('South Korea', cmap(8), 5.13e7, ['South Korea', 'Korea, South']),
+        # CovidLabel('USA', cmap(9), 3.31e8, 'US'),
 
-        # CovidLabel('Singapore', 5.84e6, 'Singapore'),
-        # CovidLabel('San Marino', 3.39e4, 'San Marino'),
-        # CovidLabel('Andorra', 7.72e4, 'Andorra'),
-        # CovidLabel('AUS: NSW', 'Australia', 'New South Wales'),
-        # CovidLabel('AUS: QLD', 'Australia', 'Queensland'),
-        # CovidLabel('AUS: Vic', 'Australia', 'Victoria'),
-        # CovidLabel('USA: NY', 'US', 'New York')
+        CovidLabel('Australia', cmap(0), 2.54e7, 'Australia'),
+        CovidLabel('AUS: ACT', cmap(1), 4.26e5, 'Australia', 'Australian Capital Territory'),
+        CovidLabel('AUS: NSW', cmap(2), 8.09e6, 'Australia', 'New South Wales'),
+        CovidLabel('AUS: NT', cmap(3), 2.46e5, 'Australia', 'Northern Territory'),
+        CovidLabel('AUS: SA', cmap(4), 1.75e6, 'Australia', 'South Australia'),
+        CovidLabel('AUS: TAS', cmap(5), 5.34e6, 'Australia', 'Tasmania'),
+        CovidLabel('AUS: QLD', cmap(6), 5.10e6, 'Australia', 'Queensland'),
+        CovidLabel('AUS: VIC', cmap(7), 6.63e6, 'Australia', 'Victoria'),
+        CovidLabel('AUS: WA', cmap(8), 2.62e6, 'Australia', 'Western Australia')
     ]
 
+    results = prepare_results(covid_labels)
+
+    start_date = pd.Timestamp(2020, 1, 25)
+    stop_date = results[covid_date_column].max()
+    current_date = start_date + timedelta(days=7)
+
+    while current_date <= stop_date:
+        create_plot(results, covid_labels, start_date, current_date)
+        current_date += timedelta(days=1)
+
+
+def create_plot(results, covid_labels, start_date, stop_date):
+    fig, ax = plt.subplots()
+
+    for covid_label in [_ for _ in covid_labels if _.get_label() in results.index]:
+        scale_factor = 1e3 / covid_label.population
+
+        df = results.loc[covid_label.get_label()].copy(deep=False)
+        df = df[df['DATE'] >= start_date]
+        df = df[df['DATE'] <= stop_date]
+
+        df['NEW_CONFIRMED'] = df['CONFIRMED'].diff()
+        df['NEW_CONFIRMED_ROLLING'] = df['NEW_CONFIRMED'].rolling(min_periods=1, window=7).sum()
+        df = df.fillna(0)
+
+        df = df[df['CONFIRMED'] > 100]
+        df = df[df['NEW_CONFIRMED_ROLLING'] > 0]
+
+        df['CONFIRMED'] = df['CONFIRMED'] * scale_factor
+        df['NEW_CONFIRMED_ROLLING'] = df['NEW_CONFIRMED_ROLLING'] * scale_factor
+
+        df = df[df['CONFIRMED'] > 1e-3]
+
+        x_axis = 'CONFIRMED'
+        y_axis = 'NEW_CONFIRMED_ROLLING'
+
+        label = covid_label.display_name
+        color = covid_label.color_name
+
+        # if len(df.index) > 0:
+        ax = df.plot(ax=ax, kind='line', x=x_axis, y=y_axis, color=color, label=label, loglog=True)
+
+    timestamp = stop_date.strftime('%Y-%m-%d')
+
+    plt.axis([1e-3, 5e0, 1e-4, 5e0])
+    plt.legend(loc='upper left')
+    plt.xlabel("Confirmed Cases (per 1k) - " + timestamp)
+    plt.ylabel("New Cases in Last 7 Days (per 1k)")
+    plt.gcf().set_size_inches(2 * plt.gcf().get_size_inches())
+
+    plt.savefig("covid-19_confirmed-cases_" + timestamp + ".png")
+    plt.close(fig)
+
+
+def prepare_results(covid_labels):
     results = pd.DataFrame(columns=result_columns)
     results = results.astype(result_column_types)
     results = results.set_index(result_index_columns)
 
-    latest_date = pd.Timestamp(2020, 1, 1)
-
-    for entry in os.scandir(data_path):
+    for entry in os.scandir(covid_data_path):
         if not entry.is_file() or not entry.path.endswith('.csv'):
             continue
 
         file = entry.path
         date = pd.to_datetime(Path(file).stem)
-
-        latest_date = date if date > latest_date else latest_date
 
         df = pd.read_csv(file)
         df = df.rename(columns=clean_column_names)
@@ -82,63 +139,19 @@ def main(data_path):
     results = results.sort_values(by=covid_date_column)
     results = results.sort_index(level=results.index.names)
 
-    fig, ax = plt.subplots()
-
-    for covid_label in [_ for _ in covid_labels if _.get_label() in results.index]:
-        df = results.loc[covid_label.get_label()].copy(deep=False)
-
-        scale_factor = 1e3 / covid_label.population
-
-        df['NEW_CONFIRMED'] = df['CONFIRMED'].diff()
-        df['NEW_CONFIRMED_ROLLING'] = df['NEW_CONFIRMED'].rolling(min_periods=1, window=7).sum()
-        df = df.fillna(0)
-
-        df = df[df['CONFIRMED'] > 100]
-        df = df[df['NEW_CONFIRMED_ROLLING'] > 0]
-
-        df['CONFIRMED'] = df['CONFIRMED'] * scale_factor
-        df['NEW_CONFIRMED_ROLLING'] = df['NEW_CONFIRMED_ROLLING'] * scale_factor
-
-        df = df[df['CONFIRMED'] > 1e-3]
-
-        x_axis = 'CONFIRMED'
-        y_axis = 'NEW_CONFIRMED_ROLLING'
-
-        # df['NEW_DEATHS'] = df['DEATHS'].diff()
-        # df['NEW_DEATHS_ROLLING'] = df['NEW_DEATHS'].rolling(min_periods=1, window=7).sum()
-        # df = df.fillna(0)
-        #
-        # df = df[df['DEATHS'] > 100]
-        # df = df[df['NEW_DEATHS_ROLLING'] > 0]
-        #
-        # df['DEATHS'] = df['DEATHS'] * scale_factor
-        # df['NEW_DEATHS_ROLLING'] = df['NEW_DEATHS_ROLLING'] * scale_factor
-        #
-        # x_axis = 'DEATHS'
-        # y_axis = 'NEW_DEATHS_ROLLING'
-
-        if len(df.index) > 0:
-            ax = df.plot(ax=ax, kind='line', x=x_axis, y=y_axis, label=covid_label.display_name, loglog=True)
-
-    plt.legend(loc='best')
-    plt.xlabel("Confirmed Cases (per 1k) - " + latest_date.strftime('%Y-%m-%d'))
-    plt.ylabel("New Cases in Last 7 Days (per 1k)")
-    # plt.xlabel("Deaths (per 1k)")
-    # plt.ylabel("New Deaths in Last 7 Days (per 1k)")
-    plt.gcf().set_size_inches(2 * plt.gcf().get_size_inches())
-
-    plt.savefig("current.png")
-    plt.show()
+    return results
 
 
 class CovidLabel:
     display_name: str
+    color_name: str
     population: float
     first_level: list
     second_level: list
 
-    def __init__(self, display_name, population, first_level, second_level=None):
+    def __init__(self, display_name, color_name, population, first_level, second_level=None):
         self.display_name = display_name
+        self.color_name = color_name
         self.population = population
 
         if isinstance(first_level, str):
@@ -178,4 +191,4 @@ def clean_column_names(x):
 
 
 if __name__ == '__main__':
-    main(covid_data)
+    main()
